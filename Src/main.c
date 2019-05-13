@@ -55,7 +55,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "lwip/opt.h"
+#include "lwip/sys.h"
+#include "lwip/api.h"
+#include "lwip/sockets.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,7 +69,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define PORT   5001
+#define IP_ADDR  "192.168.1.106"
+#define RECV_DATA 1024
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -77,6 +83,7 @@
 UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
+osThreadId myTaskLEDHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -86,6 +93,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void const * argument);
+void StartTaskLED(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -145,6 +153,10 @@ int main(void)
   /* definition and creation of defaultTask */
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 1024);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of myTaskLED */
+  osThreadDef(myTaskLED, StartTaskLED, osPriorityLow, 0, 218);
+  myTaskLEDHandle = osThreadCreate(osThread(myTaskLED), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -289,6 +301,47 @@ int fputc(int ch, FILE *f)
 	return ch;
 }
 
+//¿Í»§¶Ë
+void client()
+{
+		{
+			int sock = -1;
+			struct sockaddr_in client_addr;
+			uint8_t send_buf[] = "This is a TCP client test \r\n";
+			
+			while(1)
+			{
+				sock = socket(AF_INET, SOCK_STREAM, 0);
+				if(sock < 0)
+				{
+					osDelay(10);
+					continue;
+				}
+				client_addr.sin_family = AF_INET;
+				client_addr.sin_port = htons(PORT);
+				client_addr.sin_addr.s_addr = inet_addr(IP_ADDR);
+				memset(&(client_addr.sin_zero), 0, sizeof(client_addr.sin_zero));
+				
+				if(connect(sock, (struct sockaddr*)&client_addr, sizeof(struct sockaddr)) == -1)
+				{
+					printf("connect failed \r\n");
+					closesocket(sock);
+					osDelay(10);
+					continue;
+				}
+				printf("connect to iperf server successful!\n");
+			
+				while(1)
+				{
+					if(write(sock, send_buf, sizeof(send_buf)) < 0)
+						break;
+					osDelay(10);
+				}
+				closesocket(sock);
+			}
+		}
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -304,6 +357,80 @@ void StartDefaultTask(void const * argument)
   MX_LWIP_Init();
 
   /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+	int sock = -1, connected;
+	char *recv_data;
+	struct sockaddr_in server_addr, client_addr;
+	socklen_t sin_size;
+	int recv_data_len;
+	
+	recv_data = (char *)pvPortMalloc(RECV_DATA);
+	if(recv_data == NULL)
+	{
+		printf("No memory\n");
+		goto __exit;
+	}
+	
+	sock = socket(AF_INET, SOCK_STREAM, 0);
+	if(sock < 0)
+	{
+		printf("socket error\n");
+	}
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_addr.s_addr = INADDR_ANY;
+	server_addr.sin_port = htons(PORT);
+	memset(&(server_addr.sin_zero), 0, sizeof(server_addr.sin_zero));
+  
+	if(bind(sock, (struct sockaddr *)&server_addr, sizeof(struct sockaddr)) == -1)
+	{
+		printf("unable to bind\n");
+		goto __exit;
+	}
+	
+	listen(sock, 5);
+	
+	while(1)
+	{
+		sin_size = sizeof(struct sockaddr_in);
+		connected = accept(sock, (struct sockaddr *)&client_addr, &sin_size);
+		printf("new client connected from %s, %d\r\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		{
+			int flag = 1;
+			setsockopt(connected, IPPROTO_TCP, TCP_NODELAY, (void *)&flag, sizeof(int));
+		}
+		while(1)
+		{
+			recv_data_len = recv(connected, recv_data, RECV_DATA, 0);
+			
+			if(recv_data_len <= 0)
+				break;
+			printf("recv %d len data\r\n", recv_data_len);
+			write(connected, recv_data, recv_data_len);
+		}
+		if(connected >= 0)
+			closesocket(connected);
+		connected = -1;
+	}
+	
+__exit:
+	if(recv_data) free(recv_data);
+	if(sock >= 0)  closesocket(sock);
+
+	vTaskDelete(defaultTaskHandle);
+	
+  /* USER CODE END 5 */ 
+}
+
+/* USER CODE BEGIN Header_StartTaskLED */
+/**
+* @brief Function implementing the myTaskLED thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskLED */
+void StartTaskLED(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskLED */
   /* Infinite loop */
   for(;;)
   {
@@ -323,7 +450,7 @@ void StartDefaultTask(void const * argument)
 		printf("%f \r\n", 3.0);
     osDelay(1000);
 	}
-  /* USER CODE END 5 */ 
+  /* USER CODE END StartTaskLED */
 }
 
 /**
